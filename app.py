@@ -7,11 +7,13 @@ app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
 # --- CONFIGURATION ---
-# Bhai ye dhyan dena, API_ID bina quotes ke hona chahiye
-API_ID = 33917975  
+API_ID = int(33917975) 
 API_HASH = "9ded8160307386acef2451d464e7a9b9"
 
-# Helper to run async methods
+# --- RAM DATABASE (Global Dictionary) ---
+# Yahan hum temporary session strings save karenge
+TEMP_DB = {}
+
 def run_async(coro):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -20,19 +22,9 @@ def run_async(coro):
     finally:
         loop.close()
 
-# Helper: Session Path in /tmp (Safe folder for Render)
-def get_session_name(phone):
-    return f"sess_{str(phone).strip()}"
-
-# Helper: Remove session
-def remove_session(phone):
-    try:
-        session_name = get_session_name(phone)
-        file_path = f"/tmp/{session_name}.session"
-        if os.path.exists(file_path):
-            os.remove(file_path)
-    except:
-        pass
+# Phone number clean karne ka helper
+def clean_phone_number(phone):
+    return str(phone).replace('+', '').replace(' ', '').strip()
 
 @app.route('/health', methods=['GET', 'HEAD'])
 def health_check():
@@ -44,65 +36,75 @@ def index():
 
 @app.route('/send_otp', methods=['POST'])
 def send_otp():
-    # Force String Conversion for Phone
-    phone = str(request.json.get('phone')).strip()
+    raw_phone = str(request.json.get('phone'))
+    phone = clean_phone_number(raw_phone)
     
     if not phone:
         return jsonify({"status": "error", "message": "Phone number required"})
 
-    remove_session(phone)
-
     async def process():
-        session_name = get_session_name(phone)
-        
-        # API_ID ko int() me wrap kiya hai taaki error na aaye
+        # Step 1: Memory me client banao
         client = Client(
-            name=session_name,
-            api_id=int(API_ID), 
-            api_hash=API_HASH,
-            workdir="/tmp"
+            name="temp_sender", 
+            api_id=API_ID, 
+            api_hash=API_HASH, 
+            in_memory=True # File nahi banegi
         )
         
         await client.connect()
         try:
-            sent_code = await client.send_code(phone)
+            sent_code = await client.send_code(raw_phone)
+            
+            # CRITICAL: Session String export karke RAM me save karo
+            # Ye 'Auth Key' hai, iske bina Telegram code reject kar dega
+            temp_session = await client.export_session_string()
+            TEMP_DB[phone] = temp_session
+            
             await client.disconnect()
+            print(f"✅ OTP Sent to {phone}. Session saved in RAM.")
             return {"status": "success", "hash": sent_code.phone_code_hash}
         except Exception as e:
             await client.disconnect()
+            print(f"❌ Error sending OTP: {e}")
             return {"status": "error", "message": str(e)}
 
     return jsonify(run_async(process()))
 
 @app.route('/verify_otp', methods=['POST'])
 def verify_otp():
-    # Sab kuch Force Convert karo taaki Type Error na aaye
-    phone = str(request.json.get('phone')).strip()
+    raw_phone = str(request.json.get('phone'))
+    phone = clean_phone_number(raw_phone)
     code = str(request.json.get('code')).strip()
     hash_code = request.json.get('hash')
     
-    async def process():
-        session_name = get_session_name(phone)
-        
-        if not os.path.exists(f"/tmp/{session_name}.session"):
-             return {"status": "error", "message": "Session Timeout. Click 'Send OTP' again."}
+    # Check karo RAM me session hai ya nahi
+    if phone not in TEMP_DB:
+        print(f"❌ Session missing for {phone}")
+        return jsonify({"status": "error", "message": "Session Expired! Please Reload & Send OTP Again."})
 
+    saved_session = TEMP_DB[phone]
+
+    async def process():
+        # Step 2: Wahi purana session use karo (Resume Connection)
         client = Client(
-            name=session_name,
-            api_id=int(API_ID), # Yaha bhi int() lagaya hai
-            api_hash=API_HASH,
-            workdir="/tmp"
+            name="temp_verifier", 
+            api_id=API_ID, 
+            api_hash=API_HASH, 
+            session_string=saved_session, # RAM se load kiya
+            in_memory=True
         )
         
         await client.connect()
         try:
-            # Code ko bhi str() me wrap kiya hai
-            await client.sign_in(phone, hash_code, code)
+            await client.sign_in(raw_phone, hash_code, code)
             
-            string_session = await client.export_session_string()
+            # Login Success -> Final String Generate
+            final_string = await client.export_session_string()
             await client.disconnect()
-            remove_session(phone)
-            return {"status": "success", "session": string_session}
+            
+            # RAM clear karo
+            del TEMP_DB[phone]
+            return {"status": "success", "session": final_string}
         except Exception as e:
             error_msg = str(e)
             if "SESSION_PASSWORD_NEEDED" in error_msg:
@@ -116,25 +118,31 @@ def verify_otp():
 
 @app.route('/verify_password', methods=['POST'])
 def verify_password():
-    phone = str(request.json.get('phone')).strip()
+    raw_phone = str(request.json.get('phone'))
+    phone = clean_phone_number(raw_phone)
     password = str(request.json.get('password')).strip()
     
+    if phone not in TEMP_DB:
+        return jsonify({"status": "error", "message": "Session Expired."})
+
+    saved_session = TEMP_DB[phone]
+    
     async def process():
-        session_name = get_session_name(phone)
         client = Client(
-            name=session_name,
-            api_id=int(API_ID),
-            api_hash=API_HASH,
-            workdir="/tmp"
+            name="temp_password", 
+            api_id=API_ID, 
+            api_hash=API_HASH, 
+            session_string=saved_session,
+            in_memory=True
         )
         
         await client.connect()
         try:
             await client.check_password(password)
-            string_session = await client.export_session_string()
+            final_string = await client.export_session_string()
             await client.disconnect()
-            remove_session(phone)
-            return {"status": "success", "session": string_session}
+            del TEMP_DB[phone]
+            return {"status": "success", "session": final_string}
         except Exception as e:
             await client.disconnect()
             return {"status": "error", "message": str(e)}
