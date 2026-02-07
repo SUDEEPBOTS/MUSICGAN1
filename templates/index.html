@@ -75,40 +75,53 @@
             to { opacity: 1; transform: translateY(0); }
         }
 
-        h1 { font-weight: 600; margin-bottom: 5px; }
-        p { color: var(--text-sec); font-size: 14px; margin-bottom: 25px; }
+        h1 { font-weight: 600; margin-bottom: 5px; font-size: 22px; }
+        p { color: var(--text-sec); font-size: 13px; margin-bottom: 25px; }
+
+        .input-group {
+            margin-bottom: 15px;
+            text-align: left;
+        }
+        
+        .input-label {
+            font-size: 12px;
+            color: var(--text-sec);
+            margin-left: 5px;
+            margin-bottom: 5px;
+            display: block;
+        }
 
         input {
             width: 100%;
             background: #1a1a1a;
             border: 1px solid #333;
-            padding: 15px;
+            padding: 12px;
             color: white;
-            border-radius: 12px;
-            font-size: 16px;
-            margin-bottom: 15px;
+            border-radius: 10px;
+            font-size: 14px;
+            margin-bottom: 5px;
             box-sizing: border-box;
             outline: none;
-            text-align: center;
             transition: 0.3s;
         }
 
         input:focus {
             border-color: var(--accent);
-            box-shadow: 0 0 15px var(--accent-glow);
+            box-shadow: 0 0 10px var(--accent-glow);
         }
 
         button {
             width: 100%;
-            padding: 15px;
+            padding: 12px;
             background: var(--accent);
             color: white;
             border: none;
-            border-radius: 12px;
-            font-size: 16px;
+            border-radius: 10px;
+            font-size: 15px;
             font-weight: 600;
             cursor: pointer;
             transition: 0.3s;
+            margin-top: 10px;
         }
 
         button:hover {
@@ -139,7 +152,7 @@
             padding: 10px;
             border-radius: 8px;
             font-family: monospace;
-            font-size: 12px;
+            font-size: 11px;
             resize: none;
             margin-bottom: 10px;
         }
@@ -207,10 +220,24 @@
 
         <div id="step1" class="step active">
             <span class="logo">⚡</span>
-            <h1>Pyrogram Session</h1>
-            <p>Securely generate your string session.</p>
+            <h1>Telegram Login</h1>
+            <p>Enter your details to generate session.</p>
             
-            <input type="text" id="phone" placeholder="+91 9999999999">
+            <div class="input-group">
+                <span class="input-label">API ID</span>
+                <input type="number" id="api_id" placeholder="e.g. 1234567">
+            </div>
+
+            <div class="input-group">
+                <span class="input-label">API Hash</span>
+                <input type="text" id="api_hash" placeholder="e.g. 0123456789abcdef...">
+            </div>
+
+            <div class="input-group">
+                <span class="input-label">Phone Number</span>
+                <input type="text" id="phone" placeholder="+91 9999999999">
+            </div>
+
             <button onclick="sendOTP()" id="btn1">Send OTP 🚀</button>
             <div class="loader" id="load1"></div>
         </div>
@@ -220,7 +247,7 @@
             <h1>Enter OTP</h1>
             <p>Check your Telegram app for the code.</p>
             
-            <input type="text" id="otp" placeholder="1 2 3 4 5">
+            <input type="number" id="otp" placeholder="1 2 3 4 5" style="text-align: center; letter-spacing: 5px;">
             <button onclick="verifyOTP()" id="btn2">Verify OTP 🔐</button>
             <div class="loader" id="load2"></div>
         </div>
@@ -242,6 +269,8 @@
             
             <textarea id="sessionString" readonly></textarea>
             <button onclick="copyString()" class="copy-btn" id="copyBtn">Copy String 📋</button>
+            <br><br>
+            <button onclick="location.reload()" style="background:#222; font-size: 12px;">Generate Another</button>
         </div>
 
     </div>
@@ -262,7 +291,13 @@
         // --- Step 1: Send OTP ---
         async function sendOTP() {
             phoneNumber = document.getElementById('phone').value;
-            if(!phoneNumber) return alert("Please enter phone number!");
+            const apiId = document.getElementById('api_id').value;
+            const apiHash = document.getElementById('api_hash').value;
+
+            // Simple Validation
+            if(!phoneNumber || !apiId || !apiHash) {
+                return alert("Please fill API ID, Hash and Phone Number!");
+            }
 
             setLoading(1, true);
 
@@ -270,7 +305,11 @@
                 const res = await fetch('/send_otp', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ phone: phoneNumber })
+                    body: JSON.stringify({ 
+                        phone: phoneNumber,
+                        api_id: apiId,
+                        api_hash: apiHash
+                    })
                 });
                 const data = await res.json();
 
@@ -280,7 +319,7 @@
                 } else {
                     alert("Error: " + data.message);
                 }
-            } catch(e) { alert("Server Error"); }
+            } catch(e) { alert("Server Error or Connection Failed"); }
             
             setLoading(1, false);
         }
@@ -319,7 +358,6 @@
         // --- Step 3: Verify Password (If 2FA) ---
         async function verifyPassword() {
             const password = document.getElementById('password').value;
-            const code = document.getElementById('otp').value;
             
             setLoading(3, true);
 
@@ -329,9 +367,7 @@
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({ 
                         phone: phoneNumber, 
-                        code: code, 
-                        hash: phoneHash,
-                        password: password
+                        password: password 
                     })
                 });
                 const data = await res.json();
