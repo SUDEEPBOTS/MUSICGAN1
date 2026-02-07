@@ -13,6 +13,7 @@
             --accent-glow: rgba(0, 136, 204, 0.4);
             --text: #ffffff;
             --text-sec: #aaaaaa;
+            --success: #238636;
         }
 
         body {
@@ -49,6 +50,8 @@
             width: 100%;
             max-width: 400px;
             padding: 20px;
+            position: relative;
+            z-index: 1;
         }
 
         /* Steps Animation */
@@ -113,11 +116,6 @@
             transform: scale(1.02);
         }
 
-        button:disabled {
-            background: #333;
-            cursor: not-allowed;
-        }
-
         .loader {
             display: none;
             margin: 10px auto;
@@ -153,6 +151,52 @@
         .copy-btn:hover { background: #333; }
 
         .logo { font-size: 40px; margin-bottom: 10px; display: block; }
+
+        /* --- REDIRECT MODAL --- */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+            backdrop-filter: blur(8px);
+            animation: fadeIn 0.3s;
+        }
+
+        .modal-box {
+            background: #161b22;
+            padding: 40px;
+            border-radius: 16px;
+            border: 1px solid #333;
+            text-align: center;
+            width: 90%;
+            max-width: 350px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.8);
+            transform: scale(0.9);
+            animation: popIn 0.3s forwards;
+        }
+
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes popIn { 
+            from { transform: scale(0.9); opacity: 0; } 
+            to { transform: scale(1); opacity: 1; } 
+        }
+
+        .modal-icon {
+            font-size: 50px;
+            margin-bottom: 15px;
+            display: block;
+        }
+
+        .modal-btn {
+            background-color: var(--success);
+            margin-top: 20px;
+        }
+        .modal-btn:hover { background-color: #2ea043; }
+
     </style>
 </head>
 <body>
@@ -198,10 +242,17 @@
             
             <textarea id="sessionString" readonly></textarea>
             <button onclick="copyString()" class="copy-btn" id="copyBtn">Copy String 📋</button>
-            <br><br>
-            <button onclick="location.reload()" style="background:#222">Generate Another</button>
         </div>
 
+    </div>
+
+    <div id="redirectModal" class="modal-overlay">
+        <div class="modal-box">
+            <span class="modal-icon">🎉</span>
+            <h2 style="margin: 0 0 10px 0;">Copied!</h2>
+            <p style="color: #aaa; margin-bottom: 20px;">String copy ho gaya hai. Ab wapas jakar ise paste karein.</p>
+            <button class="modal-btn" onclick="goBackToMain()">Go Back & Paste ↪️</button>
+        </div>
     </div>
 
     <script>
@@ -317,11 +368,27 @@
         function copyString() {
             const copyText = document.getElementById("sessionString");
             copyText.select();
-            document.execCommand("copy");
+            copyText.setSelectionRange(0, 99999); // Mobile fix
             
+            try {
+                navigator.clipboard.writeText(copyText.value);
+            } catch (err) {
+                document.execCommand("copy");
+            }
+
             const btn = document.getElementById("copyBtn");
             btn.innerText = "Copied! 🎉";
-            setTimeout(() => btn.innerText = "Copy String 📋", 2000);
+            btn.style.background = "#238636";
+            
+            // SHOW POPUP AFTER COPYING
+            setTimeout(() => {
+                document.getElementById('redirectModal').style.display = 'flex';
+            }, 500);
+        }
+
+        function goBackToMain() {
+            // Redirect to the main tool
+            window.location.href = "https://nevgan.vercel.app/";
         }
     </script>
 </body>
