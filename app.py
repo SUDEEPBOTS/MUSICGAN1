@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, session
+from flask import Flask, render_template, request, jsonify
 from pyrogram import Client
 import asyncio
 import os
@@ -14,7 +14,16 @@ API_HASH = "9ded8160307386acef2451d464e7a9b9"
 def run_async(coro):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    return loop.run_until_complete(coro)
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+# --- UPTIME ROUTE (24/7 Keep Alive) ---
+@app.route('/health', methods=['GET', 'HEAD'])
+def health_check():
+    # Ye simple "OK" return karega taaki Uptime bot ko lage site chal rahi hai
+    return 'Alive', 200
 
 @app.route('/')
 def index():
