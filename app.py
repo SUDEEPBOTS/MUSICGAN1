@@ -2,7 +2,6 @@ from flask import Flask, render_template, request, jsonify
 from pyrogram import Client
 import asyncio
 import os
-import glob
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
@@ -11,7 +10,7 @@ app.secret_key = os.urandom(24)
 API_ID = 33917975
 API_HASH = "9ded8160307386acef2451d464e7a9b9"
 
-# Helper to run async methods
+# Helper to run async pyrogram methods
 def run_async(coro):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -20,12 +19,14 @@ def run_async(coro):
     finally:
         loop.close()
 
-# Clean up session files to keep server clean
+# Helper to delete session file after work is done
 def remove_session(phone):
     try:
-        file_name = f"session_{phone.replace('+', '')}.session"
-        if os.path.exists(file_name):
-            os.remove(file_name)
+        # Phone number se symbols hata kar filename banao
+        clean_phone = phone.replace('+', '').replace(' ', '')
+        filename = f"sess_{clean_phone}.session"
+        if os.path.exists(filename):
+            os.remove(filename)
     except:
         pass
 
@@ -43,21 +44,23 @@ def send_otp():
     if not phone:
         return jsonify({"status": "error", "message": "Phone number required"})
 
-    # Clean old session if exists
+    # Purani file agar ho toh delete karo
     remove_session(phone)
 
     async def process():
-        # Session file name based on phone number to keep context
-        session_name = f"session_{phone.replace('+', '')}"
-        client = Client(session_name, api_id=API_ID, api_hash=API_HASH)
+        clean_phone = phone.replace('+', '').replace(' ', '')
+        # Yaha hum 'in_memory' HATA rahe hain aur file banayenge
+        client = Client(f"sess_{clean_phone}", api_id=API_ID, api_hash=API_HASH)
         
         await client.connect()
         try:
             sent_code = await client.send_code(phone)
+            # Connection disconnect karo par FILE rehne do
             await client.disconnect()
             return {"status": "success", "hash": sent_code.phone_code_hash}
         except Exception as e:
             await client.disconnect()
+            remove_session(phone) # Error aaya toh file hata do
             return {"status": "error", "message": str(e)}
 
     return jsonify(run_async(process()))
@@ -69,25 +72,25 @@ def verify_otp():
     hash_code = request.json.get('hash')
     
     async def process():
-        session_name = f"session_{phone.replace('+', '')}"
-        # Restarting the SAME session file
-        client = Client(session_name, api_id=API_ID, api_hash=API_HASH)
+        clean_phone = phone.replace('+', '').replace(' ', '')
+        # Wahi same session file dobara load karo
+        client = Client(f"sess_{clean_phone}", api_id=API_ID, api_hash=API_HASH)
         
         await client.connect()
         try:
             await client.sign_in(phone, hash_code, code)
             string_session = await client.export_session_string()
             await client.disconnect()
-            remove_session(phone) # Cleanup on success
+            remove_session(phone) # Kaam ho gaya, file delete
             return {"status": "success", "session": string_session}
         except Exception as e:
             error_msg = str(e)
             if "SESSION_PASSWORD_NEEDED" in error_msg:
                 await client.disconnect()
+                # File delete mat karo, password step abhi baaki hai
                 return {"status": "2fa_required"}
             else:
                 await client.disconnect()
-                # Do not delete session yet, maybe user entered wrong code
                 return {"status": "error", "message": error_msg}
 
     return jsonify(run_async(process()))
@@ -98,8 +101,9 @@ def verify_password():
     password = request.json.get('password')
     
     async def process():
-        session_name = f"session_{phone.replace('+', '')}"
-        client = Client(session_name, api_id=API_ID, api_hash=API_HASH)
+        clean_phone = phone.replace('+', '').replace(' ', '')
+        # Same file load karo
+        client = Client(f"sess_{clean_phone}", api_id=API_ID, api_hash=API_HASH)
         
         await client.connect()
         try:
@@ -116,4 +120,3 @@ def verify_password():
 
 if __name__ == '__main__':
     app.run(debug=True)
-    
