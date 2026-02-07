@@ -6,12 +6,8 @@ import os
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-# --- CONFIGURATION ---
-API_ID = int(33917975) 
-API_HASH = "9ded8160307386acef2451d464e7a9b9"
-
-# --- RAM DATABASE (Global Dictionary) ---
-# Yahan hum temporary session strings save karenge
+# --- RAM DATABASE ---
+# Phone number ke sath API ID aur Hash bhi save karenge
 TEMP_DB = {}
 
 def run_async(coro):
@@ -22,8 +18,7 @@ def run_async(coro):
     finally:
         loop.close()
 
-# Phone number clean karne ka helper
-def clean_phone_number(phone):
+def clean_phone(phone):
     return str(phone).replace('+', '').replace(' ', '').strip()
 
 @app.route('/health', methods=['GET', 'HEAD'])
@@ -36,73 +31,82 @@ def index():
 
 @app.route('/send_otp', methods=['POST'])
 def send_otp():
-    raw_phone = str(request.json.get('phone'))
-    phone = clean_phone_number(raw_phone)
+    data = request.json
+    raw_phone = str(data.get('phone'))
+    phone = clean_phone(raw_phone)
     
-    if not phone:
-        return jsonify({"status": "error", "message": "Phone number required"})
+    # 1. API ID aur HASH user se lo
+    raw_api_id = data.get('api_id')
+    api_hash = data.get('api_hash')
+
+    # 2. Validation & Integer Conversion (Ye hai main FIX)
+    try:
+        api_id = int(raw_api_id) # Zabardasti number banao
+    except (ValueError, TypeError):
+        return jsonify({"status": "error", "message": "API ID must be a number (Integer)."})
+
+    if not phone or not api_hash:
+        return jsonify({"status": "error", "message": "All fields are required."})
 
     async def process():
-        # Step 1: Memory me client banao
+        # Step 3: Client banao user ke credentials se
         client = Client(
             name="temp_sender", 
-            api_id=API_ID, 
-            api_hash=API_HASH, 
-            in_memory=True # File nahi banegi
+            api_id=api_id, 
+            api_hash=api_hash, 
+            in_memory=True
         )
         
         await client.connect()
         try:
             sent_code = await client.send_code(raw_phone)
             
-            # CRITICAL: Session String export karke RAM me save karo
-            # Ye 'Auth Key' hai, iske bina Telegram code reject kar dega
+            # 4. Session + Credentials RAM me save karo
             temp_session = await client.export_session_string()
-            TEMP_DB[phone] = temp_session
+            TEMP_DB[phone] = {
+                "session": temp_session,
+                "api_id": api_id,
+                "api_hash": api_hash
+            }
             
             await client.disconnect()
-            print(f"✅ OTP Sent to {phone}. Session saved in RAM.")
             return {"status": "success", "hash": sent_code.phone_code_hash}
         except Exception as e:
             await client.disconnect()
-            print(f"❌ Error sending OTP: {e}")
             return {"status": "error", "message": str(e)}
 
     return jsonify(run_async(process()))
 
 @app.route('/verify_otp', methods=['POST'])
 def verify_otp():
-    raw_phone = str(request.json.get('phone'))
-    phone = clean_phone_number(raw_phone)
-    code = str(request.json.get('code')).strip()
-    hash_code = request.json.get('hash')
+    data = request.json
+    raw_phone = str(data.get('phone'))
+    phone = clean_phone(raw_phone)
+    code = str(data.get('code')).strip()
+    hash_code = data.get('hash')
     
-    # Check karo RAM me session hai ya nahi
+    # RAM check
     if phone not in TEMP_DB:
-        print(f"❌ Session missing for {phone}")
-        return jsonify({"status": "error", "message": "Session Expired! Please Reload & Send OTP Again."})
+        return jsonify({"status": "error", "message": "Session Expired. Please Send OTP again."})
 
-    saved_session = TEMP_DB[phone]
+    user_data = TEMP_DB[phone]
 
     async def process():
-        # Step 2: Wahi purana session use karo (Resume Connection)
         client = Client(
             name="temp_verifier", 
-            api_id=API_ID, 
-            api_hash=API_HASH, 
-            session_string=saved_session, # RAM se load kiya
+            api_id=user_data['api_id'],      # Saved API ID
+            api_hash=user_data['api_hash'],  # Saved API Hash
+            session_string=user_data['session'],
             in_memory=True
         )
         
         await client.connect()
         try:
             await client.sign_in(raw_phone, hash_code, code)
-            
-            # Login Success -> Final String Generate
             final_string = await client.export_session_string()
             await client.disconnect()
             
-            # RAM clear karo
+            # Clear RAM
             del TEMP_DB[phone]
             return {"status": "success", "session": final_string}
         except Exception as e:
@@ -118,21 +122,22 @@ def verify_otp():
 
 @app.route('/verify_password', methods=['POST'])
 def verify_password():
-    raw_phone = str(request.json.get('phone'))
-    phone = clean_phone_number(raw_phone)
-    password = str(request.json.get('password')).strip()
+    data = request.json
+    raw_phone = str(data.get('phone'))
+    phone = clean_phone(raw_phone)
+    password = str(data.get('password')).strip()
     
     if phone not in TEMP_DB:
         return jsonify({"status": "error", "message": "Session Expired."})
 
-    saved_session = TEMP_DB[phone]
+    user_data = TEMP_DB[phone]
     
     async def process():
         client = Client(
             name="temp_password", 
-            api_id=API_ID, 
-            api_hash=API_HASH, 
-            session_string=saved_session,
+            api_id=user_data['api_id'],
+            api_hash=user_data['api_hash'],
+            session_string=user_data['session'],
             in_memory=True
         )
         
@@ -150,4 +155,5 @@ def verify_password():
     return jsonify(run_async(process()))
 
 if __name__ == '__main__':
+    # Threaded=False aur Processes=1 jaruri hai RAM database ke liye
     app.run(debug=True)
