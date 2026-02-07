@@ -6,11 +6,11 @@ import os
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-# --- CONFIGURATION (FIXED) ---
+# --- CONFIGURATION ---
 API_ID = 33917975
 API_HASH = "9ded8160307386acef2451d464e7a9b9"
 
-# Helper to run async pyrogram methods
+# Helper to run async methods
 def run_async(coro):
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -19,19 +19,20 @@ def run_async(coro):
     finally:
         loop.close()
 
-# Helper: Get Session Path (Saves in /tmp folder)
+# Helper: Session file path (Safe /tmp folder)
 def get_session_path(phone):
+    # Phone number clean karo
     clean_phone = phone.replace('+', '').replace(' ', '')
-    # Render par /tmp folder writable hota hai
-    return f"/tmp/sess_{clean_phone}"
+    return f"sess_{clean_phone}"
 
-# Helper to delete session file after work is done
+# Helper: Delete session ONLY on success
 def remove_session(phone):
     try:
-        session_path = get_session_path(phone)
-        # Pyrogram .session extension khud add karta hai, isliye hume check karna padega
-        if os.path.exists(f"{session_path}.session"):
-            os.remove(f"{session_path}.session")
+        # Pyrogram workdir /tmp me files banayega
+        clean_phone = phone.replace('+', '').replace(' ', '')
+        file_path = f"/tmp/sess_{clean_phone}.session"
+        if os.path.exists(file_path):
+            os.remove(file_path)
     except:
         pass
 
@@ -49,12 +50,20 @@ def send_otp():
     if not phone:
         return jsonify({"status": "error", "message": "Phone number required"})
 
-    remove_session(phone) # Purana file saaf karo
+    # Naya OTP mangwa rahe ho, toh purani file hata do
+    remove_session(phone)
 
     async def process():
-        session_path = get_session_path(phone)
-        # Session path /tmp me point karega
-        client = Client(session_path, api_id=API_ID, api_hash=API_HASH)
+        session_name = get_session_path(phone)
+        # WORKDIR ko /tmp set kiya hai taaki files safe rahein
+        client = Client(
+            name=session_name,
+            api_id=API_ID,
+            api_hash=API_HASH,
+            workdir="/tmp",
+            device_model="SudeepStringBot",  # Fixed Device Name
+            app_version="1.0.0"
+        )
         
         await client.connect()
         try:
@@ -63,7 +72,7 @@ def send_otp():
             return {"status": "success", "hash": sent_code.phone_code_hash}
         except Exception as e:
             await client.disconnect()
-            remove_session(phone)
+            # Yahan remove_session MAT karo. Agar error aaya to user retry karega.
             return {"status": "error", "message": str(e)}
 
     return jsonify(run_async(process()))
@@ -75,20 +84,27 @@ def verify_otp():
     hash_code = request.json.get('hash')
     
     async def process():
-        session_path = get_session_path(phone)
+        session_name = get_session_path(phone)
         
-        # Check karo agar file exist karti hai
-        if not os.path.exists(f"{session_path}.session"):
-             return {"status": "error", "message": "Session file not found. Please resend OTP."}
+        # Check if session exists in /tmp
+        if not os.path.exists(f"/tmp/{session_name}.session"):
+             return {"status": "error", "message": "Session Timeout. Click 'Send OTP' again."}
 
-        client = Client(session_path, api_id=API_ID, api_hash=API_HASH)
+        client = Client(
+            name=session_name,
+            api_id=API_ID,
+            api_hash=API_HASH,
+            workdir="/tmp",
+            device_model="SudeepStringBot",
+            app_version="1.0.0"
+        )
         
         await client.connect()
         try:
             await client.sign_in(phone, hash_code, code)
             string_session = await client.export_session_string()
             await client.disconnect()
-            remove_session(phone) # Success! File delete
+            remove_session(phone) # SUCCESS! Ab delete karo safe hai.
             return {"status": "success", "session": string_session}
         except Exception as e:
             error_msg = str(e)
@@ -97,7 +113,7 @@ def verify_otp():
                 return {"status": "2fa_required"}
             else:
                 await client.disconnect()
-                # File delete mat karo, user code re-try kar sakta hai
+                # Yahan bhi file delete MAT karo. Shayad OTP typo ho.
                 return {"status": "error", "message": error_msg}
 
     return jsonify(run_async(process()))
@@ -108,8 +124,15 @@ def verify_password():
     password = request.json.get('password')
     
     async def process():
-        session_path = get_session_path(phone)
-        client = Client(session_path, api_id=API_ID, api_hash=API_HASH)
+        session_name = get_session_path(phone)
+        client = Client(
+            name=session_name,
+            api_id=API_ID,
+            api_hash=API_HASH,
+            workdir="/tmp",
+            device_model="SudeepStringBot",
+            app_version="1.0.0"
+        )
         
         await client.connect()
         try:
